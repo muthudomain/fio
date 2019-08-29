@@ -1,0 +1,193 @@
+---
+- name: Through Put Test Results
+  hosts: all
+  gather_facts: yes
+  become: yes
+  become_user: root
+  vars:
+    path_to_data: /tmp/throughput_test_{{ansible_hostname}}_{{date}}_{{time}}
+    path_to_export: /tmp/after_activity_{{ansible_hostname}}_{{date}}_{{time}}
+    date: "{{ lookup('pipe', 'date +%d%m%Y') }}"
+    time: "{{ lookup('pipe', 'date +%I%p') }}"
+  tasks:
+  - name: To check the Output Directory is  exists.
+    stat:
+      path: "{{ path_to_data }}"
+    register: tocheck_folder
+
+  - name: To print Output Directory
+    debug:
+      msg: "islnk is not defined"
+    when: tocheck_folder.stat.islnk is not defined
+
+  - name: If Output Directory does not exisit then create it.
+    file: path="{{ item }}" state=directory mode=0755
+    with_items:
+      - "{{ path_to_data }}/readoutput_data"
+      - "{{ path_to_data }}/writeoutput_data"
+      - "{{ path_to_data }}/randreadoutput_data"
+      - "{{ path_to_data }}/randwriteoutput_data"
+      - "{{ path_to_export }}/after_{{ansible_hostname}}"
+      - "{{ path_to_export }}"
+
+#    when: tocheck_folder.stat.islnk is not defined
+
+  - name: To check VM configuration
+    shell: "free -m |grep -i Mem |awk '{print $2}'"
+    register: free_output
+
+  - name: To print the output
+    debug:
+      var: free_output.stdout
+
+  - name: print memory details
+    fail:
+      msg: "Not enough Memory"
+    when:  ansible_memtotal_mb < 7820
+
+  - name: To install FIO Packages
+    yum: name=fio state=latest
+
+  - name: Sequential read test
+    shell: fio --name=seqread-512k-1G --rw=read --direct=1 --ioengine=libaio --bs=512k --numjobs=8 --size=1G --runtime=600 --group_reporting > "{{ path_to_data }}/readoutput_data/result{{ item.name }}"
+    args:
+      chdir: "{{ path_to_data }}"
+    with_items:
+      - { name: 'readoutput_firstdata' }
+      - { name: 'readoutput_seconddata' }
+      - { name: 'readoutput_thirddata' }
+    tags: ['read_test']
+
+  - name: To find the files
+    find: path="/tmp/throughput_test_{{ansible_hostname}}_{{date}}_{{time}}"
+    register: files
+
+  - name: To remove read data files
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items:
+      - "{{ files.files }}"
+
+  - name: Sequential write test
+    shell: fio --name=seqwrite-512K-1G --rw=write --direct=1 --ioengine=libaio --bs=512k --numjobs=8 --size=1G --runtime=600 --group_reporting > "{{ path_to_data }}/writeoutput_data/result{{ item.name }}"
+    args:
+      chdir: "{{ path_to_data }}"
+    with_items:
+      - { name: 'writeoutput_firstdata' }
+      - { name: 'writeoutput_seconddata' }
+      - { name: 'writeoutput_thirddata' }
+    tags: ['write_test']
+
+  - name: To find the files
+    find: path="/tmp/throughput_test_{{ansible_hostname}}_{{date}}_{{time}}"
+    register: files
+
+  - name: To remove read data files
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items:
+      - "{{ files.files }}"
+
+  - name: Sequential Random Read test
+    shell: fio --name=randread-512K-1G --rw=randread --direct=1 --ioengine=libaio --bs=512k --numjobs=8 --size=1G --runtime=600 --group_reporting > "{{ path_to_data }}/randreadoutput_data/result{{ item.name }}"
+    args:
+      chdir: "{{ path_to_data }}"
+    with_items:
+      - { name: 'randreadoutput_firstdata' }
+      - { name: 'randreadoutput_seconddata' }
+      - { name: 'randreadoutput_thirddata' }
+#   tags: ['readdomread_test']
+
+  - name: To find the files
+    find: path="/tmp/throughput_test_{{ansible_hostname}}_{{date}}_{{time}}"
+    register: files
+
+  - name: To remove read data files
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items:
+      - "{{ files.files }}"
+
+  - name: Sequential Random write test
+    shell: fio --name=randwrite-512K-1G --rw=randwrite --direct=1 --ioengine=libaio --bs=512k --numjobs=8 --size=1G --runtime=600 --group_reporting > "{{ path_to_data }}/randwriteoutput_data/result{{ item.name }}"
+    args:
+      chdir: "{{ path_to_data }}"
+    with_items:
+      - { name: 'randwriteoutput_firstdata' }
+      - { name: 'randwriteoutput_seconddata' }
+      - { name: 'randwriteoutput_thirddata' }
+    tags: ['readdomwrite_test']
+
+  - name: To find the files
+    find: path="/tmp/throughput_test_{{ansible_hostname}}_{{date}}_{{time}}"
+    register: files
+
+  - name: To remove data files
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items:
+      - "{{ files.files }}"
+
+  - name: To grep IOPS from readoutput
+    shell: grep -i iops {{ item }} | awk '{for (i=1;i<=NF;i++){ if(toupper($i) ~ "IOPS") {print $i} } }' | cut -d'=' -f2 | cut -d',' -f1 >> "{{ path_to_export }}/after_{{ansible_hostname}}/{{ansible_hostname}}_{{date}}_{{time}}_sr"
+    args:
+      chdir: "{{ path_to_data }}/readoutput_data"
+    with_items:
+      - resultreadoutput_firstdata
+      - resultreadoutput_seconddata
+      - resultreadoutput_thirddata
+
+  - name: To grep IOPS from writeoutput_data
+    shell: grep -i iops {{ item }} | awk '{for (i=1;i<=NF;i++){ if(toupper($i) ~ "IOPS") {print $i} } }' | cut -d'=' -f2 | cut -d',' -f1 >> "{{ path_to_export }}/after_{{ansible_hostname}}/{{ansible_hostname}}_{{date}}_{{time}}_sw"
+    args:
+      chdir: "{{ path_to_data }}/writeoutput_data"
+    with_items:
+      - resultwriteoutput_firstdata
+      - resultwriteoutput_seconddata
+      - resultwriteoutput_thirddata
+
+  - name: To grep IOPS from randreadoutput_data
+    shell: grep -i iops {{ item }} | awk '{for (i=1;i<=NF;i++){ if(toupper($i) ~ "IOPS") {print $i} } }'| cut -d'=' -f2 | cut -d',' -f1 >> "{{ path_to_export }}/after_{{ansible_hostname}}/{{ansible_hostname}}_{{date}}_{{time}}_rr"
+    args:
+      chdir: "{{ path_to_data }}/randreadoutput_data"
+    with_items:
+      - resultrandreadoutput_firstdata
+      - resultrandreadoutput_seconddata
+      - resultrandreadoutput_thirddata
+
+  - name: To grep IOPS from randwriteoutput_data
+    shell: grep -i iops {{ item }} | awk '{for (i=1;i<=NF;i++){ if(toupper($i) ~ "IOPS") {print $i} } }'| cut -d'=' -f2 | cut -d',' -f1 >> "{{ path_to_export }}/after_{{ansible_hostname}}/{{ansible_hostname}}_{{date}}_{{time}}_rw"
+    args:
+      chdir: "{{ path_to_data }}/randwriteoutput_data"
+    with_items:
+      - resultrandwriteoutput_firstdata
+      - resultrandwriteoutput_seconddata
+      - resultrandwriteoutput_thirddata
+
+  - name: Tar output files and folders
+    archive:
+      path: "{{ path_to_data }}"
+      dest: "{{ path_to_export }}/throughput_test.tar.gz"
+  
+  - name: To find the files
+    find: path="{{ path_to_export }}/after_{{ansible_hostname}}/" file_type=any
+    register: find_files
+    
+  - name: fetch file from remote host
+    fetch: 
+      src: "{{ item.path }}" 
+      dest: /fiotest-automation/ 
+      flat: yes
+    with_items:
+      - "{{ find_files.files }}"
+
+  - name: To remove the source files
+    file:
+      path: "{{ item.path }}"
+      state: absent
+    with_items: 
+      - "{{ find_files.files }}"  
